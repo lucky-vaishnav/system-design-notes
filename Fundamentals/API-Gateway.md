@@ -894,3 +894,5 @@ Those copies may be:
 - 3 ECS tasks
 
 The idea is the same: **remove the single point of failure and handle more traffic.**
+
+**This concept connects directly to the next topics you should learn: Load Balancers, Reverse Proxies, and Service Discovery.**
