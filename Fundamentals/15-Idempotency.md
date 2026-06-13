@@ -2,8 +2,6 @@
 
 In real payment systems, idempotency is often **more important than distributed locks**.
 
-Start your notes from here.
-
 ---
 
 # What is Idempotency?
