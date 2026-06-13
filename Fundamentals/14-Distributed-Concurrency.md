@@ -139,8 +139,6 @@ This is exactly the problem Distributed Concurrency solves.
 
 ---
 
-### 
-
 ## Part 1 — Distributed Locks
 
 ---
@@ -271,10 +269,10 @@ We already learned this.
 Example:
 
 ```
-SELECT*
+SELECT *
 FROM permits
 WHERE status='PENDING'
-FORUPDATE SKIP LOCKED
+FOR UPDATE SKIP LOCKED
 LIMIT10;
 ```
 
@@ -311,7 +309,7 @@ runs every minute.
 Instead of:
 
 ```
-SELECT*
+SELECT *
 FROM permits
 WHERE status='REFUND_PENDING';
 ```
@@ -319,10 +317,10 @@ WHERE status='REFUND_PENDING';
 you'd do:
 
 ```
-SELECT*
+SELECT *
 FROM permits
 WHERE status='REFUND_PENDING'
-FORUPDATE SKIP LOCKED
+FOR UPDATE SKIP LOCKED
 LIMIT100;
 ```
 
@@ -375,10 +373,10 @@ Example:
 ```
 BEGIN;
 
-SELECT*
+SELECT *
 FROM permits
 WHERE permit_id=123
-FORUPDATE SKIP LOCKED;
+FOR UPDATE SKIP LOCKED;
 ```
 
 Now:
@@ -431,7 +429,7 @@ Many production systems do:
 BEGIN;
 
 SELECT ...
-FORUPDATE SKIP LOCKED;
+FOR UPDATE SKIP LOCKED;
 
 UPDATE permits
 SET status='PROCESSING';
@@ -1039,7 +1037,7 @@ for you.
 Without library:
 
 ```
-awaitredis.set(
+await redis.set(
 "refund:123",
 "workerA",
 "NX",
@@ -1063,20 +1061,20 @@ npm install redlock
 Code:
 
 ```
-constRedlock=require('redlock');
+const Redlock=require('redlock');
 
-constredlock=newRedlock([redisClient]);
+const redlock=new Redlock([redisClient]);
 
-constlock=awaitredlock.acquire(
+const lock=await redlock.acquire(
   ['refund:permit:123'],
 60000
 );
 
 try {
-awaitprocessRefund();
+await processRefund();
 }
 finally {
-awaitlock.release();
+await lock.release();
 }
 ```
 
@@ -1117,7 +1115,7 @@ Then you need lock extension.
 Redlock provides:
 
 ```
-awaitlock.extend(60000);
+await lock.extend(60000);
 ```
 
 ---
@@ -1135,21 +1133,21 @@ everywhere.
 Instead people run a heartbeat timer:
 
 ```
-constlock=awaitredlock.acquire(
+const lock=await redlock.acquire(
   ['refund:permit:123'],
 60000
 );
 
-constrenewer=setInterval(async () => {
+const renewer=setInterval(async () => {
 awaitlock.extend(60000);
 },20000);
 
 try {
-awaitprocessRefund();
+await processRefund();
 }
 finally {
 clearInterval(renewer);
-awaitlock.release();
+await lock.release();
 }
 ```
 
@@ -1161,3 +1159,565 @@ Renew every 20 sec
 ```
 
 So the lock never expires while the worker is healthy.
+
+### **Part 3 - Leader Election**
+
+# What is Leader Election?
+
+Instead of:
+
+```
+Server A
+Server B
+Server C
+```
+
+all running the scheduler,
+
+we elect:
+
+```
+Leader = Server B
+```
+
+Only Server B runs:
+
+```
+Refund Scheduler
+Permit Expiration Scheduler
+Daily Cleanup Scheduler
+```
+
+The others do nothing.
+
+---
+
+## Example
+
+Without leader election:
+
+```
+Server A → Refund Job
+Server B → Refund Job
+Server C → Refund Job
+```
+
+Need locks to prevent duplicates.
+
+---
+
+With leader election:
+
+```
+Server A → Standby
+Server B → Leader
+Server C → Standby
+```
+
+Only:
+
+```
+Server B → Refund Job
+```
+
+runs.
+
+No distributed lock needed.
+
+---
+
+## What happens if Leader dies?
+
+Example:
+
+```
+Leader = Server B
+```
+
+EC2 crashes.
+
+System detects:
+
+```
+Leader missing
+```
+
+and elects:
+
+```
+Server A
+```
+
+as new leader.
+
+Then:
+
+```
+Server A starts schedulers
+```
+
+---
+
+# Real Technologies
+
+Leader election is commonly implemented using:
+
+```
+Redis
+ZooKeeper
+etcd
+Kubernetes Lease
+Consul
+```
+
+---
+
+# Which approach is better?
+
+### Distributed Lock
+
+Every server can try:
+
+```
+Process Permit 123
+```
+
+and lock prevents duplicates.
+
+Good for:
+
+```
+Many jobs
+Queue workers
+```
+
+---
+
+### Leader Election
+
+Only one server executes:
+
+```
+Scheduler
+```
+
+Good for:
+
+```
+Cron jobs
+Daily cleanup
+Batch processing
+```
+
+---
+
+### Simple Redis Leader Election
+
+Each server tries:
+
+```
+SET scheduler_leader serverA NX EX 30
+```
+
+Meaning:
+
+```
+Become leader if no leader exists
+Leader expires in 30 sec
+```
+
+---
+
+### Scenario
+
+Server A starts first:
+
+```
+SET scheduler_leader serverA NX EX 30
+```
+
+Success.
+
+Current state:
+
+```
+Leader = Server A
+```
+
+---
+
+Server B:
+
+```
+SET scheduler_leader serverB NX EX 30
+```
+
+Fails.
+
+Server C:
+
+```
+SET scheduler_leader serverC NX EX 30
+```
+
+Fails.
+
+Result:
+
+```
+Only Server A runs scheduler
+```
+
+---
+
+### Heartbeat
+
+Every 10 seconds:
+
+Server A renews:
+
+```
+EXPIRE scheduler_leader 30
+```
+
+So leader stays alive.
+
+---
+
+### Leader Crash
+
+Suppose:
+
+```
+Server A crashes
+```
+
+Heartbeats stop.
+
+After:
+
+```
+30 sec
+```
+
+Redis removes:
+
+```
+scheduler_leader
+```
+
+Now:
+
+```
+Server B
+Server C
+```
+
+try again.
+
+One wins:
+
+```
+Leader = Server B
+```
+
+Scheduler continues.
+
+---
+
+### Why not just use Distributed Locks?
+
+Good interview question.
+
+#### Distributed Lock
+
+```
+Job 1 → lock
+Job 2 → lock
+Job 3 → lock
+```
+
+Lock per job.
+
+Best for:
+
+```
+Queues
+Workers
+Refund processing
+Email processing
+```
+
+---
+
+### Leader Election
+
+```
+One server owns all jobs
+```
+
+Best for:
+
+```
+Cron jobs
+Nightly cleanup
+Data sync jobs
+Permit expiration jobs
+```
+
+---
+
+# Interview Question
+
+Suppose:
+
+```
+Leader = Server A
+```
+
+Network issue happens.
+
+Redis cannot see Server A.
+
+Redis elects:
+
+```
+Leader = Server B
+```
+
+But:
+
+```
+Server A is still alive
+```
+
+Now:
+
+```
+Server A thinks it is leader
+Server B thinks it is leader
+```
+
+Both run scheduler.
+
+This is called:
+
+### Split Brain
+
+```
+Two leaders at the same time
+```
+
+This is one of the hardest problems in distributed systems.
+
+---
+
+### Senior Engineer Note
+
+Most companies do NOT build leader election themselves.
+
+They use:
+
+```
+Kubernetes Lease
+etcd
+ZooKeeper
+Consul
+```
+
+because handling:
+
+```
+Leader Election
+Split Brain
+Failover
+Heartbeats
+```
+
+correctly is surprisingly difficult.
+
+---
+
+## Should we avoid Leader Election because of Split Brain?
+
+No.
+
+Almost every large system uses Leader Election somewhere:
+
+- Kubernetes
+- Kafka
+- ZooKeeper
+- etcd
+- Consul
+
+The goal is:
+
+```
+Make Split Brain extremely unlikely
+```
+
+rather than pretending it can never happen.
+
+---
+
+## Example
+
+Suppose:
+
+```
+Server A = Leader
+```
+
+Network glitch happens.
+
+Redis becomes unreachable from A.
+
+Redis thinks:
+
+```
+Leader disappeared
+```
+
+and elects:
+
+```
+Server B
+```
+
+Now:
+
+```
+Server A → still running jobs
+Server B → running jobs
+```
+
+Two leaders.
+
+This is Split Brain.
+
+---
+
+## How do real systems protect themselves?
+
+### Layer 1: Leader Election
+
+First protection:
+
+```
+Only one leader should exist
+```
+
+Most of the time this is enough.
+
+---
+
+### Layer 2: Database Safety
+
+Even if Split Brain occurs:
+
+```
+Leader A
+Leader B
+```
+
+they still hit the database.
+
+Then we use:
+
+```
+SELECT ...FOR UPDATE SKIP LOCKED
+```
+
+or:
+
+```
+UNIQUE CONSTRAINT
+```
+
+or:
+
+```
+Idempotency
+```
+
+as a second defense.
+
+---
+
+## Senior Design Principle
+
+Never trust only:
+
+```
+Leader Election
+```
+
+Never trust only:
+
+```
+Redis Lock
+```
+
+Never trust only:
+
+```
+Database Lock
+```
+
+Instead:
+
+```
+Layer 1 → Leader Election
+Layer 2 → DB Lock
+Layer 3 → Idempotency
+```
+
+Multiple safety nets.
+
+---
+
+## What do most companies do?
+
+For scheduler jobs:
+
+```
+Leader Election
++
+Database protection
+```
+
+For payments:
+
+```
+Idempotency
++
+Database constraints
+```
+
+because payments are too important to trust a single mechanism.
+
+---
+
+This discussion actually leads perfectly into tomorrow's topic:
+
+# Idempotency
+
+Because idempotency is the final safety net when:
+
+```
+Leader Election fails
+Redis Lock fails
+Network fails
+Worker retries
+Webhook retries
+```
+
+and you still need:
+
+```
+Only one refund
+Only one payment
+Only one booking
+```
+
+to happen.
