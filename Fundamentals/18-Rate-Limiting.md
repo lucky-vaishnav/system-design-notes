@@ -303,7 +303,7 @@ But limiter allows it.
 
 ---
 
-# Algorithm 2: Sliding Window Log
+# Algorithm 2: Sliding Window Log(Rolling window)
 
 Stores every request timestamp.
 
@@ -788,7 +788,7 @@ Token Bucket
 Sliding Window Counter
 ```
 
-## Code Examples For Better Understadning
+## Code Examples For Better Understanding
 
 ### 1. Fixed Window
 
@@ -989,8 +989,8 @@ Instead of storing every request:
 Store:
 
 ```
-Current Minute=3
-Previous Minute=5
+Current Minute counter =3
+Previous Minute counter =5
 ```
 
 Example:
@@ -1002,7 +1002,7 @@ Current time = 10:00:30
 We are:
 
 ```
-50% into current minute
+50% counter reached into current minute
 ```
 
 Weighted count:
