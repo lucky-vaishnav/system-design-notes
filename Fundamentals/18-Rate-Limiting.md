@@ -1311,3 +1311,54 @@ Token Bucket
 Leaky Bucket
 → Useful when traffic smoothing is important.
 ```
+
+### Handling Rate Limit Error At API  Level
+
+```jsx
+async function fetchWithRetry(config, meta) {
+    const maxRetries = API_RETRY_COUNT;
+    let attempt = 0;
+
+    while (attempt <= maxRetries) {
+        try {
+            const res = await axios(config);
+            return res.data;
+        } catch (err) {
+            const status = err.response?.status;
+
+            if (status === 429) {
+                if (attempt >= maxRetries) {
+                    logError('fetchRiders.rateLimit', {
+                        message: 'Rate limit retry exhausted',
+                        err,
+                        param: meta,
+                        data: { status, attempt }
+                    });
+                    throw err;
+                }
+
+                // Exponential backoff for next retry
+                const delay = Math.min(1000 * (2 ** attempt), 60000);
+                logInfo('fetchRiders.retry', {
+                    message: 'Retrying API due to rate limit',
+                    data: {
+                        attempt,
+                        nextAttempt: attempt + 1,
+                        delay,
+                        status,
+                        ...meta
+                    }
+                });
+
+                await new Promise(r => setTimeout(r, delay));
+                attempt++;
+                continue;
+            }
+
+            // Non-429 errors: do not retry
+
+            throw err;
+        }
+    }
+}
+```
