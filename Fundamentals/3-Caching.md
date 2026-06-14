@@ -1,636 +1,786 @@
+## What is Caching?
 
-**Caching** is one of the highest-value system design concepts because almost every large-scale system uses it.
+Caching means:
 
-# 1. What Problem Does Caching Solve?
+```
+Store frequently accessed data in a faster storage layer
+to avoid expensive operations.
+```
+
+Example:
+
+```
+Without Cache
+
+Client
+ ↓
+API
+ ↓
+PostgreSQL
+ ↓
+Result
+```
+
+Every request hits DB.
+
+---
+
+With Cache:
+
+```
+Client
+ ↓
+API
+ ↓
+Redis
+ ↓
+Result
+```
+
+DB often isn't touched.
+
+---
+
+# Why Cache?
+
+Benefits:
+
+```
+Faster Response Time
+Reduced Database Load
+Reduced API Calls
+Reduced Cost
+Improved Scalability
+```
+
+---
+
+Example:
+
+```
+1000 requests/min
+```
 
 Without cache:
 
 ```
-User
-  |
-API
-  |
-Database
-```
-
-Every request hits the database.
-
-Problems:
-
-- Database becomes slow.
-- Expensive queries run repeatedly.
-- More CPU usage.
-- Higher latency.
-
-Example:
-
-```
-SELECT*FROM usersWHERE id=123;
-```
-
-Executed 100,000 times daily.
-
-Same result every time.
-
-Wasteful.
-
----
-
-# 2. What is a Cache?
-
-A cache stores frequently used data in fast memory.
-
-Instead of:
-
-```
-User
- |
-API
- |
-Database
-```
-
-You get:
-
-```
-User
- |
-API
- |
-Cache (Redis)
- |
-Database
-```
-
-Redis is RAM-based, so it's much faster than a database.
-
-Typical latency:
-
-```
-Redis      : < 1 ms
-Postgres   : 5-50 ms
-```
-
-Sometimes much more.
-
----
-
-# 3. Cache Hit vs Cache Miss
-
-### Cache Hit
-
-Data exists in cache.
-
-```
-User
- |
-API
- |
-Redis
- |
-Data Found
-```
-
-Response immediately.
-
----
-
-### Cache Miss
-
-Data not in cache.
-
-```
-User
- |
-API
- |
-Redis
- |
-Not Found
- |
-Database
- |
-Store in Redis
- |
-Return Data
-```
-
----
-
-# 4. Most Common Pattern: Cache Aside
-
-This is the one you should know best.
-
-### First Request
-
-```
-User
- |
-API
- |
-Redis
- |
-MISS
- |
-Database
- |
-Redis SET
- |
-Response
-```
-
-### Second Request
-
-```
-User
- |
-API
- |
-Redis
- |
-HIT
- |
-Response
-```
-
-Node.js example:
-
-```
-constkey=`user:${userId}`;
-
-letuser=awaitredis.get(key);
-
-if (!user) {
-user=awaitUser.findByPk(userId);
-
-awaitredis.set(
-key,
-JSON.stringify(user),
-"EX",
-3600
-    );
-}
-
-returnJSON.parse(user);
-```
-
----
-
-# 5. TTL (Time To Live)
-
-Cache shouldn't live forever.
-
-Example:
-
-```
-redis.set(
-"user:123",
-value,
-"EX",
-3600
-);
-```
-
-Means:
-
-```
-1 hour
-```
-
-After that:
-
-```
-Auto deleted
-```
-
----
-
-# 6. Why Not Cache Forever?
-
-Suppose:
-
-```
-User Name = John
-```
-
-Stored in cache.
-
-Later:
-
-```
-User Name = John Smith
-```
-
-Database updated.
-
-Cache still contains:
-
-```
-John
-```
-
-Now data is stale.
-
----
-
-# 7. Cache Invalidation
-
-One of the hardest problems.
-
-Common interview joke:
-
-> There are only two hard things:
-> 
-> - Cache invalidation
-> - Naming things
-
-### Example
-
-Update user:
-
-```
-awaitUser.update(...);
-```
-
-Then:
-
-```
-awaitredis.del(`user:${userId}`);
-```
-
-Next request reloads fresh data.
-
----
-
-# 8. Write Through Cache
-
-Normal flow:
-
-```
-Update DB
-Delete Cache
-```
-
-Write Through:
-
-```
-Update Cache
-Update DB
-```
-
-Both updated together.
-
-Rare compared to Cache Aside.
-
----
-
-# 9. Write Back Cache
-
-Very fast.
-
-```
-Write Cache
-Return Success
-Database updated later
-```
-
-Risk:
-
-```
-Cache crash
-Data lost
-```
-
-Used in specialized systems.
-
----
-
-# 10. What Data Should Be Cached?
-
-Good candidates:
-
-### User Profiles
-
-```
-User Info
-Preferences
-Settings
-```
-
----
-
-### Product Details
-
-```
-Product Name
-Description
-Price
-```
-
----
-
-### Configuration
-
-```
-Agency Config
-Feature Flags
-App Settings
-```
-
----
-
-### Frequently Read Reports
-
-Expensive queries.
-
----
-
-# 11. What Should NOT Be Cached?
-
-### Payment Transactions
-
-Need latest value.
-
-### Bank Balance
-
-Need consistency.
-
-### Critical Financial Data
-
-Need accuracy.
-
----
-
-# 12. Redis Is Not Only For Cache
-
-Redis can also store:
-
-### Sessions
-
-```
-session:123
-```
-
-### OTPs
-
-```
-otp:user123
-```
-
-### Rate Limits
-
-```
-rate:user123
-```
-
-### Queues
-
-```
-BullMQ
-```
-
-### Temporary State
-
-```
-Ride booking state
-```
-
----
-
-# 13. Cache Eviction
-
-Redis memory is limited.
-
-Suppose:
-
-```
-RAM = 10 GB
-```
-
-Redis full.
-
-Must remove old data.
-
-Common policies:
-
-### LRU
-
-Least Recently Used
-
-Remove data not accessed recently.
-
-Most common.
-
----
-
-### LFU
-
-Least Frequently Used
-
-Remove data rarely accessed.
-
----
-
-# 14. Single Redis Problem
-
-Bad:
-
-```
-API
- |
-Redis
-```
-
-Redis dies.
-
-Everything slower.
-
----
-
-Production:
-
-```
-API Servers
-      |
-   Redis
-      |
-Redis Replica
-```
-
-or
-
-```
-Redis Cluster
-```
-
-for high availability.
-
----
-
-# 15. Local Cache vs Distributed Cache
-
-### Local Cache
-
-Stored inside Node process.
-
-Example:
-
-```
-constcache= {};
-```
-
-or
-
-```
-node-cache
-```
-
-Problem:
-
-```
-API1 cache != API2 cache
-```
-
----
-
-### Distributed Cache
-
-Redis.
-
-```
-API1
-API2
-API3
-  |
-Redis
-```
-
-Everyone sees same data.
-
-Preferred.
-
----
-
-# 16. Where Cache Sits
-
-Typical architecture:
-
-```
-User
- |
-Load Balancer
- |
-API Servers
- |
-Redis
- |
-Database
-```
-
----
-
-# 17. Example: Uber Ride Lookup
-
-Without cache:
-
-```
-100k requests
-100k DB queries
+1000 DB queries/min
 ```
 
 With cache:
 
 ```
-100k requests
-5k DB queries
-95k Redis queries
-```
-
-Huge reduction.
-
----
-
-# 18. Common Interview Questions
-
-### Why use Redis?
-
-Fast in-memory storage.
-
----
-
-### Difference between Redis and PostgreSQL?
-
-Redis:
-
-```
-Fast
-RAM
-Temporary
-```
-
-PostgreSQL:
-
-```
-Slower
-Disk
-Permanent
+1 DB query
+999 Redis reads
 ```
 
 ---
 
-### What is Cache Hit?
+# Cache Candidates
 
-Data found in cache.
+Good:
+
+```
+Station Data
+Configurations
+Pricing Tables
+Feature Flags
+Reference Data
+```
+
+Bad:
+
+```
+Live Driver Location
+Real-time Balance
+Rapidly Changing Data
+```
 
 ---
 
-### What is Cache Miss?
-
-Data not found in cache.
-
----
-
-### What is TTL?
-
-Automatic expiration time.
-
----
-
-### What is Cache Aside?
-
-Read cache first.
-
-If missing:
-
-- Read DB
-- Save cache
-- Return response
+# Pattern 1: Cache Aside
 
 Most common pattern.
 
 ---
 
-# How This Relates to Your Work
-
-In your Node.js projects, common Redis usages would be:
+Flow:
 
 ```
-Auth0 user details
-Agency configurations
-Permit settings
-Payment configurations
-Feature flags
-Session data
-Rate limiting
+Request
+ ↓
+Check Cache
+ ↓
+Found?
 ```
 
-instead of repeatedly querying:
+YES:
 
 ```
-PostgreSQL
-Auth0
-External APIs
+Return Cache
 ```
-### Recommended Next Topic
 
-After API Gateway → Load Balancer → Caching, the next natural topic is **Database Scaling (Replication, Read Replicas, Sharding, Partitioning)** because caching and database scaling are usually discussed together in system design interviews.
+NO:
+
+```
+Read DB
+ ↓
+Populate Cache
+ ↓
+Return Result
+```
+
+---
+
+Example:
+
+```
+conststation=awaitredis.get(key);
+
+if (!station) {
+station=awaitdb.query(...);
+awaitredis.set(key,station);
+}
+```
+
+---
+
+Advantages:
+
+```
+Simple
+Flexible
+Widely Used
+```
+
+---
+
+Disadvantages:
+
+```
+First request slow
+Needs cache invalidation
+```
+
+---
+
+# Cache Invalidation
+
+Hardest part of caching.
+
+---
+
+Question:
+
+```
+User updates station name
+```
+
+DB updated.
+
+Cache still contains:
+
+```
+Old value
+```
+
+Now:
+
+```
+Stale Data
+```
+
+---
+
+Solutions:
+
+---
+
+## Delete Cache
+
+After update:
+
+```
+awaitdb.update(...);
+
+awaitredis.del(cacheKey);
+```
+
+Next request:
+
+```
+Cache Miss
+→ Read DB
+→ Repopulate Cache
+```
+
+Most common.
+
+---
+
+## Update Cache
+
+```
+awaitdb.update(...);
+
+awaitredis.set(cacheKey,newValue);
+```
+
+---
+
+Risk:
+
+```
+DB success
+Cache update fails
+```
+
+Inconsistency.
+
+---
+
+# Pattern 2: Read Through
+
+Application does NOT read DB.
+
+Instead:
+
+```
+App
+ ↓
+Cache
+ ↓
+DB
+```
+
+Cache handles DB access.
+
+---
+
+Example:
+
+```
+App asks cache
+Cache misses
+Cache loads DB
+Cache returns result
+```
+
+---
+
+Advantage:
+
+```
+Application simpler
+```
+
+---
+
+Disadvantage:
+
+```
+More complex cache infrastructure
+```
+
+Less common.
+
+---
+
+# Pattern 3: Write Through
+
+Write both:
+
+```
+App
+ ↓
+Cache
+ ↓
+DB
+```
+
+---
+
+Example:
+
+```
+Update Station
+ ↓
+Cache Updated
+ ↓
+DB Updated
+```
+
+---
+
+Advantage:
+
+```
+Cache always fresh
+```
+
+---
+
+Disadvantage:
+
+```
+Every write slower
+```
+
+---
+
+# Pattern 4: Write Behind
+
+Write only cache first.
+
+---
+
+Flow:
+
+```
+App
+ ↓
+Cache
+ ↓
+Immediate Success
+```
+
+Later:
+
+```
+Cache
+ ↓
+DB
+```
+
+Background process.
+
+---
+
+Advantage:
+
+```
+Very fast writes
+```
+
+---
+
+Disadvantage:
+
+```
+Cache crash
+↓
+Data loss
+```
+
+Used carefully.
+
+---
+
+# Pattern 5: Refresh Ahead
+
+Before cache expires:
+
+```
+Background Job
+ ↓
+Refresh Cache
+```
+
+---
+
+Without:
+
+```
+Cache Expires
+ ↓
+User waits
+```
+
+---
+
+With:
+
+```
+User always gets warm cache
+```
+
+---
+
+Example:
+
+```
+Weather
+Stock Prices
+Frequently Read Configs
+```
+
+---
+
+# Cache TTL
+
+TTL:
+
+```
+Time To Live
+```
+
+Example:
+
+```
+EX 3600
+```
+
+means:
+
+```
+Expire after 1 hour
+```
+
+---
+
+Question:
+
+How long?
+
+Depends.
+
+---
+
+Example:
+
+Station Data:
+
+```
+24 hours
+```
+
+---
+
+User Profile:
+
+```
+15 minutes
+```
+
+---
+
+Live Data:
+
+```
+30 seconds
+```
+
+---
+
+# Cache Stampede
+
+Interview favorite.
+
+---
+
+Suppose:
+
+```
+Key expires
+```
+
+Then:
+
+```
+1000 users arrive
+```
+
+All see:
+
+```
+Cache Miss
+```
+
+All hit DB.
+
+---
+
+Result:
+
+```
+DB overwhelmed
+```
+
+---
+
+Solution 1:
+
+```
+Distributed Lock
+```
+
+One request:
+
+```
+Rebuild Cache
+```
+
+Others wait.
+
+---
+
+Solution 2:
+
+```
+Refresh Ahead
+```
+
+Never let cache expire.
+
+---
+
+# Cache Avalanche
+
+Many keys expire together.
+
+---
+
+Example:
+
+```
+1 million keys
+```
+
+TTL:
+
+```
+3600 seconds
+```
+
+All expire:
+
+```
+At same time
+```
+
+---
+
+Result:
+
+```
+Massive DB traffic
+```
+
+---
+
+Solution:
+
+Add randomness.
+
+Instead of:
+
+```
+3600
+```
+
+Use:
+
+```
+3600 + random(300)
+```
+
+---
+
+# Cache Penetration
+
+Requests for data that doesn't exist.
+
+Example:
+
+```
+station:INVALID123
+station:INVALID123
+station:INVALID123
+```
+
+Every request:
+
+```
+Cache Miss
+DB Miss
+```
+
+---
+
+DB gets hammered.
+
+---
+
+Solution:
+
+Cache NULL.
+
+Example:
+
+```
+station:INVALID123 = NULL
+TTL 5 minutes
+```
+
+---
+
+# Redis Eviction Policies
+
+What if Redis becomes full?
+
+---
+
+Policy 1:
+
+```
+noeviction
+```
+
+Reject new writes.
+
+---
+
+Policy 2:
+
+```
+allkeys-lru
+```
+
+Least Recently Used removed.
+
+Most common.
+
+---
+
+Policy 3:
+
+```
+allkeys-random
+```
+
+Random key removed.
+
+---
+
+Policy 4:
+
+```
+volatile-lru
+```
+
+Only TTL keys eligible.
+
+---
+
+Most systems:
+
+```
+allkeys-lru
+```
+
+---
+
+# Distributed Cache
+
+Application Memory:
+
+```
+Server A
+Server B
+Server C
+```
+
+Each has own cache.
+
+Problem:
+
+```
+Inconsistent data
+```
+
+---
+
+Redis:
+
+```
+Server A
+Server B
+Server C
+      ↓
+     Redis
+```
+
+Shared cache.
+
+Most modern systems use this.
+
+---
+
+# Real Interview Questions
+
+### Why cache?
+
+```
+Reduce latency
+Reduce DB load
+Improve scalability
+```
+
+---
+
+### Most common cache pattern?
+
+```
+Cache Aside
+```
+
+---
+
+### Hardest part of caching?
+
+```
+Cache Invalidation
+```
+
+---
+
+### How to prevent cache stampede?
+
+```
+Distributed Lock
+Refresh Ahead
+```
+
+---
+
+### Difference between Cache Aside and Write Through?
+
+```
+Cache Aside:
+Read DB on miss
+
+Write Through:
+Update cache and DB together
+```
+
+---
+
+# Topic Summary
+
+```
+Caching
+│
+├── Why Cache
+├── Cache Aside
+├── Cache Invalidation
+├── Read Through
+├── Write Through
+├── Write Behind
+├── Refresh Ahead
+├── TTL
+├── Cache Stampede
+├── Cache Avalanche
+├── Cache Penetration
+├── Redis Eviction Policies
+└── Distributed Cache
+```
