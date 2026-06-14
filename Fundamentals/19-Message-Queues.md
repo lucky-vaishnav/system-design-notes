@@ -1,7 +1,5 @@
 Before Kafka, RabbitMQ, SQS, etc., understand WHY queues exist.
 
----
-
 ## Problem Without Queue
 
 Imagine your Parking Service receives:
