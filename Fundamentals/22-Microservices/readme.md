@@ -18,7 +18,6 @@
 
 **Why this order?**
 
-- You already know **Saga** and **Outbox** conceptually.
 - Now we'll first learn **how services communicate**.
 - Then we'll learn **how communication becomes faster (gRPC)**.
 - Then **how communication fails (Circuit Breaker)**.
