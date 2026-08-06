@@ -4,22 +4,11 @@ A senior engineer is expected to know **when to cache, what to cache, cache cons
 
 ---
 
-# Phase F — Scaling
-
-```text id="2b8kn7"
-29. ✅ Consistent Hashing
-30. ✅ Sharding
-
-➡️ 31. Distributed Cache (Today)
-```
-
----
-
 # 1. Why Do We Need a Cache?
 
 Imagine your application.
 
-```text id="qumnr2"
+```
 Client
 
 ↓
@@ -35,7 +24,7 @@ Every request hits the database.
 
 Example
 
-```text id="c27s9o"
+```
 GET /users/100
 ```
 
@@ -51,7 +40,7 @@ Fine.
 
 Now
 
-```text id="qcrwvu"
+```
 100,000 requests/second
 ```
 
@@ -83,7 +72,7 @@ A cache is a **fast temporary storage** used to avoid repeatedly reading the sam
 
 Usually
 
-```text id="vfck8p"
+```
 Memory
 
 ↓
@@ -103,7 +92,7 @@ Example
 
 Without cache
 
-```text id="kvh7f4"
+```
 API
 
 ↓
@@ -117,7 +106,7 @@ Database
 
 With cache
 
-```text id="pqv8cn"
+```
 API
 
 ↓
@@ -139,7 +128,7 @@ Huge improvement.
 
 Stored inside one application instance.
 
-```text id="phx2r7"
+```
 App
 
 ↓
@@ -149,14 +138,14 @@ Memory
 
 Example
 
-```javascript
+```jsx
 const cache = new Map();
 ```
 
 Advantages
 
-* Extremely fast
-* No network
+- Extremely fast
+- No network
 
 Problem
 
@@ -166,7 +155,7 @@ Multiple servers.
 
 Example
 
-```text id="dgvrzh"
+```
 App1
 
 Cache
@@ -192,7 +181,7 @@ App2 still has stale data.
 
 One shared cache.
 
-```text id="2gfwc8"
+```
 App1
 
 App2
@@ -212,10 +201,10 @@ This is what most production systems use.
 
 # 4. Popular Distributed Caches
 
-* Redis ⭐ (most popular)
-* Memcached
-* Hazelcast
-* Apache Ignite
+- Redis ⭐ (most popular)
+- Memcached
+- Hazelcast
+- Apache Ignite
 
 In interviews,
 
@@ -229,7 +218,7 @@ This is the pattern used in most Node.js applications.
 
 Flow
 
-```text id="kpch9i"
+```
 Request
 
 ↓
@@ -255,7 +244,7 @@ Return
 
 Example
 
-```typescript
+```tsx
 let user = await redis.get(`user:${id}`);
 
 if (!user) {
@@ -269,9 +258,9 @@ return user;
 
 Advantages
 
-* Simple
-* Flexible
-* Most common
+- Simple
+- Flexible
+- Most common
 
 ---
 
@@ -281,7 +270,7 @@ Application
 
 never reads DB directly.
 
-```text id="o6tttq"
+```
 App
 
 ↓
@@ -303,7 +292,7 @@ Less common with Redis.
 
 Write flow
 
-```text id="qu4zya"
+```
 App
 
 ↓
@@ -327,7 +316,7 @@ Higher write latency.
 
 Flow
 
-```text id="e0yjlwm"
+```
 App
 
 ↓
@@ -407,7 +396,7 @@ Update cache
 
 after DB.
 
-```text id="srygzo"
+```
 DB
 
 ↓
@@ -421,7 +410,7 @@ Redis
 
 Delete cache.
 
-```text id="o0l34v"
+```
 Update DB
 
 ↓
@@ -443,7 +432,7 @@ Every cache item can expire.
 
 Example
 
-```text id="4pppht"
+```
 User
 
 ↓
@@ -453,7 +442,7 @@ User
 
 Redis
 
-```text
+```
 SET user:100 value EX 600
 ```
 
@@ -469,7 +458,7 @@ cache eventually expires.
 
 Data found.
 
-```text id="b6aqyk"
+```
 Redis
 
 ↓
@@ -487,7 +476,7 @@ Done
 
 Data absent.
 
-```text id="qjlwmh"
+```
 Redis
 
 ↓
@@ -511,7 +500,7 @@ Very common interview metric.
 
 Formula
 
-```text id="rn3b1z"
+```
 Hits
 
 /
@@ -521,7 +510,7 @@ Hits
 
 Example
 
-```text id="cy30x7"
+```
 900 Hits
 
 100 Misses
@@ -551,7 +540,7 @@ All miss cache.
 
 All hit database.
 
-```text id="8q0q6r"
+```
 1000
 
 ↓
@@ -563,9 +552,9 @@ Database crashes.
 
 Solutions
 
-* Distributed Lock
-* Request Coalescing
-* Refresh Before Expiry
+- Distributed Lock
+- Request Coalescing
+- Refresh Before Expiry
 
 ---
 
@@ -573,7 +562,7 @@ Solutions
 
 User requests
 
-```text id="g0t7lb"
+```
 user999999999
 ```
 
@@ -625,13 +614,13 @@ Random TTL.
 
 Instead of
 
-```text id="2hsm9b"
+```
 10 min
 ```
 
 Use
 
-```text id="d4tgjr"
+```
 10-15 min
 ```
 
@@ -647,7 +636,7 @@ Which is source of truth?
 
 Always
 
-```text id="xlgxnf"
+```
 Database
 ```
 
@@ -689,7 +678,7 @@ Everything connects.
 
 Current
 
-```text id="9vj7l4"
+```
 Profile
 
 ↓
@@ -699,7 +688,7 @@ PostgreSQL
 
 Better
 
-```text id="njlwmh"
+```
 Profile
 
 ↓
@@ -717,7 +706,7 @@ PostgreSQL
 
 Update
 
-```text id="p6ztvl"
+```
 DB
 
 ↓
@@ -737,7 +726,7 @@ Very common.
 
 Good candidates
 
-```text id="ch5gof"
+```
 User Profile
 
 Station List
@@ -753,7 +742,7 @@ Reference Data
 
 Bad candidates
 
-```text id="77kvea"
+```
 Wallet Balance
 
 Current Payment
@@ -819,7 +808,7 @@ then update/delete cache.
 
 # 23. Production Architecture
 
-```text id="5cxswd"
+```
 Client
 
 ↓
@@ -857,22 +846,21 @@ Return
 
 # 24. Senior Production Practices
 
-* Cache only data with a good read/write ratio.
-* Always define a TTL unless there's a strong reason not to.
-* Prefer **delete-on-update** over trying to update cached objects in many places.
-* Monitor:
-
-  * Cache hit ratio
-  * Redis memory usage
-  * Evictions
-  * Latency
-* Design for cache failures—your application should still work if Redis is temporarily unavailable.
+- Cache only data with a good read/write ratio.
+- Always define a TTL unless there's a strong reason not to.
+- Prefer **delete-on-update** over trying to update cached objects in many places.
+- Monitor:
+    - Cache hit ratio
+    - Redis memory usage
+    - Evictions
+    - Latency
+- Design for cache failures—your application should still work if Redis is temporarily unavailable.
 
 ---
 
 # 25. Senior Developer Notes
 
-```text id="jlwmi9"
+```
 Distributed Cache
 
 Purpose:
@@ -950,13 +938,15 @@ Redis + Cache Aside
 ```
 
 ---
-### Question
-**Q: In the Write-Around Cache pattern, do we update the cache on every read? If not, when is the cache updated? If we don't refresh it on every read, won't users sometimes see stale data? Then what is the benefit of using Write-Around Cache?**
 
+### Question
+
+**Q: In the Write-Around Cache pattern, do we update the cache on every read? If not, when is the cache updated? If we don't refresh it on every read, won't users sometimes see stale data? Then what is the benefit of using Write-Around Cache?**
 
 No. **The cache is updated only on a cache miss**, not on every read. Once the data is cached, subsequent reads come directly from the cache until it expires (TTL) or is explicitly invalidated. Yes, this means users **may temporarily see stale data**, which is acceptable for use cases like logs and analytics where perfect real-time consistency isn't required. Write-Around trades a little consistency for lower write overhead and better cache efficiency.
 
-> **Rule to remember:**
-> **Write → Database only**
-> **First Read (Cache Miss) → Database → Cache**
-> **Later Reads → Cache until TTL/Invalidation**
+> **Rule to remember:
+Write → Database only
+First Read (Cache Miss) → Database → Cache
+Later Reads → Cache until TTL/Invalidation**
+>
