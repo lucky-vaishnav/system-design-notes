@@ -946,7 +946,7 @@ Redis + Cache Aside
 No. **The cache is updated only on a cache miss**, not on every read. Once the data is cached, subsequent reads come directly from the cache until it expires (TTL) or is explicitly invalidated. Yes, this means users **may temporarily see stale data**, which is acceptable for use cases like logs and analytics where perfect real-time consistency isn't required. Write-Around trades a little consistency for lower write overhead and better cache efficiency.
 
 > **Rule to remember:
-Write → Database only
-First Read (Cache Miss) → Database → Cache
-Later Reads → Cache until TTL/Invalidation**
+> Write → Database only
+> First Read (Cache Miss) → Database → Cache
+> Later Reads → Cache until TTL/Invalidation**
 >
