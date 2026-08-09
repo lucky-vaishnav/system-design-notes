@@ -1,8 +1,9 @@
+```
 ✅ Distributed Consensus
 ➡️ Raft
 ⬜ Paxos (overview)
 ⬜ ZooKeeper / etcd Concepts
-
+```
 # Raft Consensus Algorithm — Deep Dive
 
 Raft is a **consensus algorithm** that allows a group of servers to maintain the same replicated state, even when some servers fail.
