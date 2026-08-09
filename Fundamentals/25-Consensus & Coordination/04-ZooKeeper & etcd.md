@@ -1,10 +1,10 @@
 This is the final topic in our **Consensus & Coordination** phase, and it ties together Raft, leader election, distributed locks, service discovery, and Kubernetes.
-
+```
 ✅ Distributed Consensus
 ✅ Raft
 ✅ Paxos
 ➡️ ZooKeeper / etcd Concepts
-
+```
 # ZooKeeper & etcd — Deep Understanding
 
 The first thing to understand is:
