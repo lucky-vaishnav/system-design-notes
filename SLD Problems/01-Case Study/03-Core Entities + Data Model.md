@@ -442,3 +442,4 @@ And specifically think about:
 
 **Don't design the perfect APIs yet. Give me your first version, and I'll review/challenge it like an interviewer.**
 
+API design is worth thinking through rather than rushing, especially because it will connect everything we've discussed so far—entities, consistency, idempotency, caching, and service boundaries.
