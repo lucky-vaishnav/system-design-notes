@@ -910,6 +910,28 @@ Notification / Reporting / other consumers
 
 This is the model I want you to carry into future system-design problems.
 
+---
+This one is deliberately deep because we're using it to build a **reusable system-design way of thinking**, not just finish one architecture.
+
+Next rough plan:
+
+| Day | Focus                                            |
+| --- | ------------------------------------------------ |
+| 1   | Database transaction + concurrency deep dive     |
+| 2   | Consistency + cache strategy                     |
+| 3   | Payment failures + reconciliation                |
+| 4   | Saga + Outbox + Kafka in this system             |
+| 5   | Scaling, bottlenecks & high availability         |
+| 6   | Security + rate limiting + reliability           |
+| 7   | Observability + DR + disaster scenarios          |
+| 8   | Final technology-agnostic architecture           |
+| 9   | **AWS mapping** — services + alternatives        |
+| 10  | AWS failure/scaling/trade-off discussion         |
+| 11  | Full end-to-end interview walkthrough            |
+| 12  | Mock senior system-design interview / refinement |
+
+---
+
 **Next step after this:** we should go deeper into the **actual database transaction and reservation concurrency flow**, including what happens with 2, 10, or 100 concurrent requests for the last few spaces. After that we'll cover **consistency, cache strategy, and failure/reconciliation scenarios**, and only then finalize the technology-agnostic architecture before mapping it to AWS.
 
 [1]: https://www.postgresql.org/docs/17/explicit-locking.html?utm_source=chatgpt.com "PostgreSQL: Documentation: 17: 13.3. Explicit Locking"
