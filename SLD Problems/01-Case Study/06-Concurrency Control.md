@@ -915,7 +915,7 @@ This one is deliberately deep because we're using it to build a **reusable syste
 
 Next rough plan:
 
-| Day | Focus                                            |
+|  | Focus                                            |
 | --- | ------------------------------------------------ |
 | 1   | Database transaction + concurrency deep dive     |
 | 2   | Consistency + cache strategy                     |
