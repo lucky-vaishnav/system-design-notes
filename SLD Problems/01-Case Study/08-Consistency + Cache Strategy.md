@@ -1617,7 +1617,7 @@ We've covered the major cache behavior:
 ✅ Stale-while-revalidate
 ```
 
-### One final piece before moving to Topic #3
+### One final piece before moving to next topic
 
 I'd like to close this section with **one important race condition: cache update ordering**.
 
@@ -1873,7 +1873,7 @@ Next in our sequence is **— Payment Failures + Reconciliation**, which is a ve
 
 Yes — your concern is valid, but there are **two different problems** getting mixed together: **cache invalidation causing a burst of DB reads** and **cache penetration**. They are not exactly the same.
 
-### Your question, rephrased for notes
+### Your question
 
 > **If we invalidate the availability cache after every reservation, and there are hundreds or thousands of reservations happening concurrently, could repeated invalidation cause a large number of Redis misses and therefore a sudden spike in database reads? Would it be better to maintain and update real-time availability in Redis instead of frequently invalidating cache keys, and how do we avoid stale Redis data?**
 
