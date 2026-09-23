@@ -1,5 +1,5 @@
 ## Payment Failures + Reconciliation
-
+### Part A — Payment timeout / unknown state
 This is the next important piece because our reservation flow currently looks like:
 
 ```text
