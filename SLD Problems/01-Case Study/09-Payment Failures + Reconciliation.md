@@ -422,3 +422,453 @@ You could say:
 That's a **strong senior-level answer**.
 
 Next, we should go deeper into **what happens when payment succeeds but the reservation cannot be confirmed**, because that's where **compensation/refunds and eventually Saga** become necessary.
+
+---
+
+### Part B — Next: Payment succeeds, but reservation confirmation fails
+
+This is one of the most important failure scenarios in our parking system because **money and inventory are in two different systems**.
+
+### Start with the scenario
+
+Suppose:
+
+```text
+Reservation R1
+Parking Slot S1
+Amount = ₹500
+```
+
+Our flow:
+
+```text
+1. Create reservation
+        ↓
+2. DB → PENDING_PAYMENT
+        ↓
+3. Call Payment Provider
+        ↓
+4. Payment Provider → SUCCESS
+        ↓
+5. User is charged ₹500
+        ↓
+6. Our service tries to update:
+       PENDING_PAYMENT → CONFIRMED
+        ↓
+7. DB update fails
+```
+
+Now we have:
+
+```text
+Payment Provider:
+SUCCESS / ₹500 charged
+
+Our DB:
+PENDING_PAYMENT
+```
+
+This is recoverable.
+
+We **should not immediately refund**, because the first thing we should do is determine whether the reservation confirmation can simply be retried.
+
+---
+
+## First principle: Payment success does not automatically mean refund
+
+Our first action should be:
+
+```text
+Payment SUCCESS
+      ↓
+Try to confirm reservation
+      ↓
+Did confirmation succeed?
+```
+
+If yes:
+
+```text
+PENDING_PAYMENT → CONFIRMED
+```
+
+Done.
+
+If the DB update failed because of a temporary problem:
+
+```text
+DB unavailable
+transaction timeout
+network issue
+deadlock
+temporary service failure
+```
+
+then a retry may successfully confirm the reservation.
+
+So:
+
+```text
+Payment SUCCESS
+      ↓
+Confirmation failed
+      ↓
+Retry confirmation
+      ↓
+SUCCESS
+```
+
+No refund is required.
+
+---
+
+# But what if confirmation cannot happen?
+
+Here's where it becomes more interesting.
+
+Suppose:
+
+```text
+Payment = SUCCESS
+Reservation = PENDING_PAYMENT
+```
+
+Then the reservation expires:
+
+```text
+PENDING_PAYMENT
+      ↓
+EXPIRED
+      ↓
+Parking inventory released
+```
+
+Now the customer has paid, but the parking space is no longer held.
+
+We cannot simply change:
+
+```text
+EXPIRED → CONFIRMED
+```
+
+because another customer might already have booked that slot.
+
+So now we have:
+
+```text
+Customer paid ₹500
+        ↓
+No reservation available
+        ↓
+Need compensation
+```
+
+Usually that means:
+
+```text
+Refund ₹500
+```
+
+---
+
+# The important thing: Don't refund immediately on every failure
+
+Imagine:
+
+```text
+Payment SUCCESS
+       ↓
+Confirmation DB update fails
+       ↓
+Refund immediately
+```
+
+That can be dangerous.
+
+The DB update might actually have succeeded, but our application received a timeout.
+
+For example:
+
+```text
+Our service → DB: CONFIRM
+                    ↓
+                 SUCCESS
+                    ↓
+              Response lost
+                    ↓
+Our service thinks: "confirmation failed"
+                    ↓
+Refund
+```
+
+Now we could end up with:
+
+```text
+Reservation = CONFIRMED
+Payment = SUCCESS
+Refund = SUCCESS
+```
+
+That's an inconsistent financial state.
+
+So we need **reconciliation before compensation**.
+
+---
+
+# A safer decision flow
+
+```text
+Payment SUCCESS
+      ↓
+Confirm reservation
+      ↓
+ ┌────┴──────────┐
+ ↓               ↓
+SUCCESS        UNKNOWN/FAILURE
+ ↓               ↓
+CONFIRMED      Reconcile
+                 ↓
+          Is reservation actually
+             confirmed?
+            /          \
+          YES           NO
+           ↓             ↓
+        Done          Can we still
+                      confirm it?
+                       /     \
+                     YES      NO
+                      ↓        ↓
+                  Confirm     Refund
+```
+
+The key idea is:
+
+> **Before issuing a refund, establish that the reservation cannot be fulfilled.**
+
+---
+
+# Now let's introduce the Refund state
+
+We shouldn't have:
+
+```text
+Payment = SUCCESS
+Refund = boolean
+```
+
+Instead, model refund as a state machine.
+
+For example:
+
+```text
+NOT_REQUIRED
+     ↓
+REFUND_PENDING
+     ↓
+REFUND_PROCESSING
+     ↓
+REFUNDED
+```
+
+And failures:
+
+```text
+REFUND_PROCESSING
+        ↓
+     FAILED
+        ↓
+ retry
+```
+
+This becomes important because **refunds can fail too**.
+
+---
+
+## Example: Refund API times out
+
+Suppose:
+
+```text
+Payment = SUCCESS
+Reservation = EXPIRED
+
+        ↓
+
+Refund request → Payment Provider
+
+        ↓
+
+TIMEOUT
+```
+
+What do we know?
+
+We don't know whether:
+
+```text
+Refund failed
+```
+
+or:
+
+```text
+Refund succeeded but response was lost
+```
+
+Exactly the same problem we had with payment.
+
+Therefore:
+
+> **Refunds also require idempotency and reconciliation.**
+
+For example:
+
+```text
+refund_id = REF123
+idempotency_key = REFUND_RESERVATION_R1
+```
+
+If we retry:
+
+```text
+Refund request REF123
+```
+
+the provider should not create two refunds.
+
+---
+
+# So now we have two reconciliation processes
+
+### Payment reconciliation
+
+```text
+PENDING_PAYMENT / UNKNOWN
+        ↓
+Check provider
+        ↓
+SUCCESS / FAILED / UNKNOWN
+```
+
+### Refund reconciliation
+
+```text
+REFUND_PENDING / UNKNOWN
+        ↓
+Check provider
+        ↓
+REFUNDED / FAILED / UNKNOWN
+```
+
+Both need:
+
+* durable state
+* idempotency
+* retry
+* exponential backoff
+* background reconciliation
+* monitoring/alerting
+
+---
+
+# One more important scenario
+
+Suppose payment succeeds:
+
+```text
+Payment = SUCCESS
+```
+
+But reservation confirmation fails because the parking inventory is no longer available.
+
+For example:
+
+```text
+Reservation R1
+Parking Slot S1
+
+Payment → SUCCESS
+
+But meanwhile:
+S1 → booked by another reservation
+```
+
+We now **cannot fulfill R1**.
+
+Our business workflow becomes:
+
+```text
+Payment SUCCESS
+       ↓
+Reservation cannot be fulfilled
+       ↓
+Refund required
+       ↓
+Refund SUCCESS
+       ↓
+Reservation → PAYMENT_FAILED/REFUNDED
+```
+
+This is what we call **compensation**.
+
+We're effectively undoing the financial effect because we couldn't complete the business operation.
+
+And this is exactly where we're heading toward **Saga**.
+
+---
+
+# The big picture
+
+Our parking workflow is now:
+
+```text
+                 Reservation
+                     │
+                     ↓
+              PENDING_PAYMENT
+                     │
+                     ↓
+                Pay Provider
+                     │
+            ┌────────┼────────┐
+            ↓        ↓        ↓
+         SUCCESS   FAILED   UNKNOWN
+            │        │        │
+            │        │        └── Reconciliation
+            │        │
+            ↓        ↓
+       Confirm    Release
+       Booking
+            │
+       ┌────┴─────┐
+       ↓          ↓
+    SUCCESS    Cannot confirm
+       │          │
+       ↓          ↓
+   CONFIRMED    REFUND
+                  │
+             ┌────┴────┐
+             ↓         ↓
+          SUCCESS    UNKNOWN
+             │         │
+             ↓         ↓
+          CLOSED   Reconcile
+```
+
+### The senior-level mental model
+
+There are **three different concerns**:
+
+**1. Retry**
+
+> Try the operation again when failure is likely transient.
+
+**2. Reconciliation**
+
+> Ask the authoritative external system what actually happened when the result is unknown.
+
+**3. Compensation**
+
+> If one business step succeeded but the overall business operation cannot complete, perform a compensating action such as a refund.
+
+That's the distinction I want you to remember.
