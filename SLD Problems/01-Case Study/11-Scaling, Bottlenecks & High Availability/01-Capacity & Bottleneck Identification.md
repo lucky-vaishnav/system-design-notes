@@ -142,6 +142,719 @@ That's the key mindset for this topic:
 > **Don't ask "How do I scale the system?" first. Ask "Which component is limiting throughput right now?"**
 
 ---
+
+The goal is that after we finish, you should be able to look at almost any system-design problem and systematically answer:
+
+> **Where will it bottleneck? How do I prove it? How do I scale that component? What new bottleneck does scaling introduce? How do I maintain correctness and availability while scaling?**
+
+---
+
+## The mental model I want you to build
+
+For any system, think in this order:
+
+**Traffic → Capacity → Bottleneck → Scale → New Bottleneck → Failure → Recovery**
+
+Not:
+
+> "We have high traffic, so let's add more servers."
+
+That's usually too shallow for a senior interview.
+
+---
+
+## 1. First principle: Every component has a capacity
+
+Imagine our request path:
+
+```text
+Client
+   ↓
+Load Balancer
+   ↓
+Node.js Application
+   ↓
+Redis
+   ↓
+PostgreSQL
+   ↓
+Kafka / External Services
+```
+
+Each component has some maximum sustainable throughput.
+
+For example, purely as an illustration:
+
+```text
+Node.js       → 30K req/sec
+Redis         → 100K req/sec
+PostgreSQL    → 8K writes/sec
+Kafka         → 100K events/sec
+```
+
+These aren't universal numbers. The important concept is:
+
+> **The system's throughput is constrained by its bottleneck.**
+
+If PostgreSQL can sustainably process only 8K writes/sec, adding 100 Node.js servers doesn't magically give us 100K writes/sec.
+
+It may actually make things worse by sending more concurrent work toward PostgreSQL.
+
+---
+
+# 2. Throughput vs Latency vs Capacity
+
+This distinction is extremely important and applies to almost every design.
+
+### Throughput
+
+How much work can the system process?
+
+Example:
+
+> 10,000 requests/sec
+
+### Latency
+
+How long does one request take?
+
+Example:
+
+> p95 = 200 ms
+
+### Capacity
+
+How much load can a component sustainably handle before its performance degrades?
+
+Example:
+
+> PostgreSQL can sustainably handle 8K writes/sec under our workload.
+
+These are related but **not the same thing**.
+
+For example, a system might process:
+
+```text
+10,000 req/sec
+```
+
+but each request takes:
+
+```text
+2 seconds
+```
+
+That isn't necessarily good performance.
+
+And a system might have:
+
+```text
+500 ms average latency
+```
+
+while p99 is:
+
+```text
+10 seconds
+```
+
+which means a small but important percentage of users are having a terrible experience.
+
+So when we discuss scaling, we'll look at:
+
+* throughput
+* latency
+* concurrency
+* CPU
+* memory
+* I/O
+* connection utilization
+* queue depth
+* error rate
+* lock contention
+
+---
+
+# 3. Now apply this to our PostgreSQL
+
+Our established reservation load is:
+
+**100K reservations/minute**
+
+That's approximately:
+
+**1,667 reservation requests/sec**
+
+And payment:
+
+**20K payments/minute**
+
+≈ **333 payments/sec**
+
+The important thing is that **100K HTTP requests/sec doesn't necessarily mean 100K DB writes/sec**.
+
+A single reservation request may perform several DB operations.
+
+For example:
+
+```text
+BEGIN
+
+Check inventory
+       ↓
+Lock inventory
+       ↓
+Update inventory
+       ↓
+Create reservation
+       ↓
+Create payment record
+       ↓
+Create outbox event
+
+COMMIT
+```
+
+One API request could therefore generate multiple database operations.
+
+This is where senior-level capacity analysis starts.
+
+---
+
+# 4. The first PostgreSQL bottleneck: Connection Pool
+
+This is one of the most important concepts for Node.js backend engineers.
+
+Suppose we have:
+
+```text
+20 Node.js instances
+```
+
+and each instance has:
+
+```text
+pool.max = 50
+```
+
+Potentially:
+
+```text
+20 × 50 = 1,000 DB connections
+```
+
+Now imagine PostgreSQL can comfortably handle only a few hundred active connections for our workload.
+
+We have a problem.
+
+More application servers can actually **make the database less stable**.
+
+This leads to a fundamental principle:
+
+> **Application-layer scaling and database-layer scaling must be planned together.**
+
+---
+
+# 5. Why can't we just increase the DB connection pool?
+
+Because a connection isn't free.
+
+Every connection consumes resources:
+
+* memory
+* CPU
+* connection management overhead
+* query execution resources
+
+And if thousands of requests are waiting for DB connections, increasing the pool can simply move the queue from:
+
+```text
+Application
+```
+
+to:
+
+```text
+PostgreSQL
+```
+
+Instead of solving the bottleneck.
+
+This is why **connection pooling is a capacity-control mechanism**, not simply a performance optimization.
+
+---
+
+# 6. Now the interesting part: reservation concurrency
+
+Suppose 1,000 users simultaneously try to reserve the **same parking lot / inventory resource**.
+
+Our PostgreSQL design says:
+
+```sql
+SELECT ...
+FOR UPDATE;
+```
+
+The first transaction obtains the lock.
+
+The others wait.
+
+Conceptually:
+
+```text
+User A ──→ LOCK ──→ inventory row
+                    │
+User B ────────────┤ waiting
+User C ────────────┤ waiting
+User D ────────────┤ waiting
+User E ────────────┘
+```
+
+This is important:
+
+### We can horizontally scale Node.js
+
+```text
+10 → 50 → 100 instances
+```
+
+But if all those requests ultimately need to modify **the same database row**, we haven't eliminated the contention.
+
+We've simply created more concurrent requests waiting for the same lock.
+
+This is called a **hotspot / hot row**.
+
+---
+
+# 7. This is a very important distinction
+
+There are two different problems:
+
+### Problem A — insufficient compute
+
+```text
+Node.js CPU = 95%
+```
+
+Solution might be:
+
+```text
+Add more application instances
+```
+
+### Problem B — serialization bottleneck
+
+```text
+1000 requests
+       ↓
+same inventory row
+       ↓
+one lock
+       ↓
+requests wait
+```
+
+Adding more Node.js instances doesn't fundamentally solve it.
+
+The database intentionally serializes those operations because **correctness requires it**.
+
+This is one of the biggest lessons from our concurrency discussion:
+
+> **Some bottlenecks cannot simply be horizontally scaled because the underlying business operation must remain serialized.**
+
+---
+
+# 8. Now let's connect this with our parking system
+
+Imagine:
+
+```text
+Parking Lot A
+Available spaces = 1
+```
+
+And:
+
+```text
+User A
+User B
+User C
+...
+User Z
+```
+
+all try to reserve it simultaneously.
+
+We cannot allow:
+
+```text
+A → success
+B → success
+C → success
+```
+
+because there is only one space.
+
+So some serialization is unavoidable.
+
+The goal isn't:
+
+> "Remove all locking."
+
+The goal is:
+
+> **Keep the correctness-critical serialization as small and efficient as possible.**
+
+That means:
+
+* short transactions
+* proper indexes
+* minimal work while holding locks
+* no external API calls inside DB transactions
+* consistent lock ordering
+* appropriate isolation level
+* avoid unnecessary rows being locked
+
+We've already established why we don't call the payment provider while holding the DB lock.
+
+That's also a **scaling decision**, not only a transaction decision.
+
+---
+
+# 9. Read scaling vs Write scaling
+
+This distinction will be useful across almost every future system-design problem.
+
+### Reads
+
+Usually easier to scale.
+
+We can use:
+
+```text
+PostgreSQL
+    ↓
+Read Replicas
+    ↓
+Application
+```
+
+or:
+
+```text
+Redis
+```
+
+or:
+
+```text
+Search index
+```
+
+depending on the workload.
+
+### Writes
+
+Much harder.
+
+Because writes often involve:
+
+* consistency
+* ordering
+* locking
+* transactions
+* unique constraints
+* conflicts
+* durability
+
+That's why our:
+
+```text
+1M searches/min
+```
+
+may actually be easier to scale than:
+
+```text
+100K reservations/min
+```
+
+even though the reservation number is much smaller.
+
+---
+
+# 10. Read replicas — important caveat
+
+Suppose we add:
+
+```text
+Primary DB
+   ↓
+Read Replica 1
+Read Replica 2
+Read Replica 3
+```
+
+Now we can distribute read traffic.
+
+But replicas are generally **asynchronous**.
+
+So:
+
+```text
+Primary:
+reservation = CONFIRMED
+```
+
+while a replica might temporarily have:
+
+```text
+reservation = PENDING_PAYMENT
+```
+
+Therefore:
+
+> **Don't send correctness-critical reads to a potentially stale replica.**
+
+For our system:
+
+### Can use replica
+
+```text
+Reservation history
+Analytics
+Reporting
+Some search/read workloads
+```
+
+### Must use authoritative state
+
+```text
+Can I reserve this slot?
+Did this reservation succeed?
+What's the authoritative payment state?
+```
+
+This connects directly to the consistency topic we already completed.
+
+---
+
+# 11. This gives us a general scaling hierarchy
+
+When a system becomes slow, don't immediately jump to sharding.
+
+Think progressively:
+
+```text
+1. Optimize inefficient work
+        ↓
+2. Remove unnecessary DB calls
+        ↓
+3. Add proper indexes
+        ↓
+4. Cache appropriate reads
+        ↓
+5. Horizontal application scaling
+        ↓
+6. Read replicas
+        ↓
+7. Partitioning
+        ↓
+8. Specialized storage/read models
+        ↓
+9. Sharding
+```
+
+The exact order can change by system, but the principle is:
+
+> **Use the least complex solution that removes the actual bottleneck.**
+
+Sharding is powerful, but it introduces significant complexity:
+
+* routing
+* cross-shard queries
+* transactions
+* rebalancing
+* operational complexity
+* hot shards
+
+So we shouldn't introduce it simply because the system is "large."
+
+---
+
+# 12. One more fundamental concept: Queueing
+
+Suppose:
+
+```text
+Incoming = 20K req/sec
+Capacity = 15K req/sec
+```
+
+Then:
+
+```text
+Backlog = +5K/sec
+```
+
+The system may initially appear fine.
+
+Then latency starts increasing:
+
+```text
+100 ms
+↓
+500 ms
+↓
+2 sec
+↓
+5 sec
+↓
+timeouts
+```
+
+This is why **latency degradation is often an early symptom of capacity saturation**.
+
+Eventually:
+
+```text
+timeouts
+→ retries
+→ more requests
+→ more load
+→ more saturation
+→ more timeouts
+```
+
+This creates a **retry storm**.
+
+That's an extremely important production failure mode.
+
+---
+
+# 13. The scaling feedback loop
+
+You should remember this pattern:
+
+```text
+Traffic increases
+      ↓
+Component approaches capacity
+      ↓
+Latency increases
+      ↓
+Requests timeout
+      ↓
+Clients retry
+      ↓
+Traffic increases further
+      ↓
+Component becomes even more overloaded
+```
+
+This is why production systems often need:
+
+* timeouts
+* bounded retries
+* exponential backoff
+* jitter
+* circuit breakers
+* rate limiting
+* backpressure
+* load shedding
+
+We'll cover these more deeply in the **Security + Rate Limiting + Reliability** section.
+
+---
+
+# The foundation I want you to take from this
+
+For **any future system-design problem**, when you reach scaling, ask these questions:
+
+### 1. What is the traffic?
+
+```text
+RPS
+read/write ratio
+peak vs average
+burstiness
+```
+
+### 2. What does one request actually do?
+
+```text
+DB queries
+cache operations
+external calls
+events
+CPU work
+```
+
+### 3. What is the capacity of each layer?
+
+```text
+API
+Cache
+DB
+Queue
+External dependency
+```
+
+### 4. Where is the bottleneck?
+
+```text
+CPU?
+Memory?
+Network?
+DB I/O?
+Connections?
+Locks?
+Hot keys?
+External API?
+```
+
+### 5. Can it scale horizontally?
+
+If yes:
+
+```text
+Add instances / replicas / partitions
+```
+
+If no:
+
+Ask **why**.
+
+Often the reason is:
+
+```text
+shared state
+serialization
+consistency
+ordering
+```
+
+### 6. What happens after we scale it?
+
+This is the senior-level question.
+
+> **Scaling one component frequently moves the bottleneck somewhere else.**
+
+---
+
+## Now let's continue interactively
+
+For our parking system, let's focus specifically on this scenario:
+
+> **100K reservation requests/minute, but a large percentage of them are concentrated on a small number of extremely popular parking lots.**
+
+We already know Node.js can horizontally scale.
+
+**What would you do about the database hot-row / hot-inventory problem?**
+
+Don't worry about giving a perfect answer. Think through the trade-off yourself first.
+
+---
 Yes — I understand your idea. You're essentially saying:
 
 > If a particular parking lot becomes extremely hot, instead of allowing unlimited concurrent reservation attempts against the same inventory row, we should **control/constrain the concurrency** for that specific resource.
@@ -387,4 +1100,142 @@ That's where things like distributed locks, centralized queues, partitioned work
 
 We'll tackle that next, because it generalizes extremely well to other system-design problems.
 
+---
+
+# Distributed Concurrency Control
+
+Let's continue from exactly where we stopped.
+
+Imagine we have:
+
+```text
+             Load Balancer
+                  │
+       ┌──────────┼──────────┐
+       ↓          ↓          ↓
+    Node 1     Node 2     Node 3
+       │          │          │
+       └──────┬───┴──────────┘
+              ↓
+        PostgreSQL
+```
+
+10,000 requests target the same hot parking lot.
+
+If we try to maintain a concurrency limit like:
+
+```text
+"Only 10 requests for Lot A at a time"
+```
+
+inside each Node.js process:
+
+```text
+Node 1 → 10
+Node 2 → 10
+Node 3 → 10
+...
+```
+
+we don't actually have a global limit of 10.
+
+We might have:
+
+```text
+10 × number_of_instances
+```
+
+requests executing.
+
+So we need **shared coordination** if we truly want a system-wide limit.
+
+Possible approaches include:
+
+### A. Distributed lock
+
+A shared coordination mechanism determines which worker can process a resource.
+
+### B. Centralized queue
+
+Requests for the same resource enter a shared queue.
+
+### C. Partitioned ownership
+
+We assign a particular resource/key to a particular worker/partition.
+
+For example:
+
+```text
+hash(parkingLotId)
+       ↓
+Partition 7
+       ↓
+Worker responsible for Lot A
+```
+
+This is particularly interesting because it connects directly to **Kafka partitioning**, which we'll study later.
+
+### D. Database itself
+
+Sometimes the best answer is:
+
+> **Don't add another distributed coordination layer. Let PostgreSQL handle the concurrency because it already provides the required correctness guarantees.**
+
+This is an important senior-level trade-off.
+
+---
+
+# The principle I want you to remember
+
+**Distributed systems have a cost for coordination.**
+
+If PostgreSQL can safely handle:
+
+```text
+hot row → 1,000 concurrent attempts
+```
+
+then introducing Redis locks + queues + workers may make the architecture unnecessarily complicated.
+
+But if:
+
+```text
+hot row
+   ↓
+massive contention
+   ↓
+lock waits
+   ↓
+timeouts
+   ↓
+retry storm
+```
+
+then we have to consider another strategy.
+
+So the question isn't:
+
+> "Which scaling technique is best?"
+
+It's:
+
+> **"What is the actual bottleneck, and what is the simplest mechanism that removes it without compromising correctness?"**
+
+That is the mindset I want you to carry into **every system-design problem**.
+
+---
+
+## Our track from here
+
+We'll now finish **5.1** by understanding:
+
+**hotspots → distributed concurrency → capacity limits → queueing/backpressure**
+
+Then I'll explicitly say:
+
+> **"5.1 complete."**
+
+Only then we'll move to **5.2 Application/API Scaling**.
+
+And at the end of each major subsection, I'll give you a short **"What to remember for any system design"** summary so you don't lose the bigger picture again.
 
