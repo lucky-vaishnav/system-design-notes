@@ -1,5 +1,3 @@
-### Scaling, Bottlenecks & High Availability 
-
 We’ll keep this **senior-level and interview-oriented**, applying everything we've already designed rather than re-learning basic scaling concepts.
 
 Our established peak load is:
@@ -1227,15 +1225,650 @@ That is the mindset I want you to carry into **every system-design problem**.
 
 ## Our track from here
 
-We'll now finish **5.1** by understanding:
+We'll now finish by understanding:
 
 **hotspots → distributed concurrency → capacity limits → queueing/backpressure**
 
-Then I'll explicitly say:
+---
 
-> **"5.1 complete."**
+# Hotspots, Concurrency Control & Backpressure
 
-Only then we'll move to **5.2 Application/API Scaling**.
+We were at this situation:
 
-And at the end of each major subsection, I'll give you a short **"What to remember for any system design"** summary so you don't lose the bigger picture again.
+```text
+100K reservations/min
+        ↓
+~1,667 reservations/sec
+        ↓
+Many requests may target the same popular parking lot
+        ↓
+Hot inventory row
+        ↓
+DB lock contention
+```
 
+The important question is:
+
+> **How do we prevent a hot resource from overwhelming the system?**
+
+There are several layers of protection.
+
+---
+
+## 1. First: Don't solve a DB problem before measuring it
+
+Suppose Lot A gets 5,000 reservation attempts/sec.
+
+Before introducing a queue, we should measure:
+
+```text
+DB CPU
+DB I/O
+Lock wait time
+Transaction duration
+Active connections
+Connection pool wait time
+Query latency
+Timeouts
+```
+
+Imagine we observe:
+
+```text
+DB CPU             → 55%
+Lock wait          → 20 ms
+Transaction time   → 40 ms
+Errors             → near zero
+```
+
+Then the database may actually be handling the workload perfectly.
+
+We don't need an elaborate distributed queue just because Lot A is popular.
+
+But if we see:
+
+```text
+DB CPU             → 95%
+Lock wait          → 2–5 sec
+Connection pool    → saturated
+Transaction time   → 3 sec
+Timeouts           → increasing
+```
+
+then we have a real scalability problem.
+
+**Measure first, optimize second.**
+
+---
+
+# 2. Keep the critical section extremely small
+
+This is one of the most reusable techniques.
+
+Our transaction currently looks conceptually like:
+
+```text
+BEGIN
+   ↓
+Lock inventory
+   ↓
+Check availability
+   ↓
+Update inventory
+   ↓
+Create reservation
+   ↓
+Create payment record
+   ↓
+Create outbox event
+COMMIT
+```
+
+That's okay because the external payment call happens **after** the transaction.
+
+We absolutely don't want:
+
+```text
+BEGIN
+   ↓
+Lock inventory
+   ↓
+Call Payment Provider
+   ↓
+Wait 2 seconds
+   ↓
+COMMIT
+```
+
+If payment takes 2 seconds, we've potentially held the inventory lock for 2 seconds.
+
+At high concurrency:
+
+```text
+Request A → lock → payment → 2 sec
+Request B → waiting
+Request C → waiting
+Request D → waiting
+...
+```
+
+So one of the simplest ways to improve scaling is:
+
+> **Reduce the amount of work performed while holding shared locks.**
+
+This principle applies far beyond parking systems.
+
+---
+
+# 3. Resource-level concurrency control
+
+Now suppose Lot A is genuinely becoming a hotspot.
+
+We could limit concurrent reservation attempts for **Lot A specifically**.
+
+For example:
+
+```text
+Lot A
+   ↓
+Maximum 100 concurrent reservation operations
+```
+
+while:
+
+```text
+Lot B → 100
+Lot C → 100
+Lot D → 100
+```
+
+This prevents one hot resource from consuming all of our database capacity.
+
+Conceptually:
+
+```text
+                 Reservation Requests
+                         │
+              ┌──────────┴──────────┐
+              ↓                     ↓
+          Normal lots             Lot A
+              │                     │
+              ↓                     ↓
+         Normal processing     Concurrency limit
+                                    │
+                                    ↓
+                               PostgreSQL
+```
+
+But remember:
+
+**This is an optimization/control mechanism, not our source of truth.**
+
+PostgreSQL still decides whether the reservation is actually valid.
+
+---
+
+# 4. What should happen to requests beyond the limit?
+
+We have three broad choices.
+
+### Option A — Queue
+
+```text
+Request
+   ↓
+Queue
+   ↓
+Process later
+```
+
+Useful when the operation can tolerate waiting.
+
+### Option B — Reject quickly
+
+Return something like:
+
+```text
+429 / 503
+```
+
+depending on the reason and API semantics.
+
+This is **load shedding**.
+
+The idea is:
+
+> Better to reject some work than allow the entire system to become unavailable.
+
+### Option C — Let the request wait briefly
+
+For example:
+
+```text
+Wait up to 1–2 seconds
+```
+
+If capacity becomes available:
+
+```text
+process
+```
+
+Otherwise:
+
+```text
+timeout/reject
+```
+
+For an interactive booking system, this can sometimes be more appropriate than putting users into a long queue.
+
+---
+
+# 5. Queueing is not always appropriate
+
+This is important for interviews.
+
+Suppose:
+
+```text
+Parking Lot A
+1 available slot
+
+10,000 users
+```
+
+We could put all 10,000 into a queue.
+
+But imagine user #9,000 waits five minutes.
+
+By the time we process the request:
+
+```text
+slot = unavailable
+```
+
+So we created:
+
+```text
+huge queue
++
+poor UX
++
+lots of requests that ultimately fail
+```
+
+A queue isn't automatically a solution.
+
+For a booking system, you might instead:
+
+* admit a controlled number of requests,
+* reject excess demand quickly,
+* ask users to retry,
+* or use a waiting-room mechanism if the business specifically wants one.
+
+---
+
+# 6. Backpressure
+
+This brings us to an important general concept:
+
+> **Backpressure means slowing down or limiting upstream work when downstream capacity is constrained.**
+
+Consider:
+
+```text
+Client
+  ↓
+API
+  ↓
+Reservation Service
+  ↓
+PostgreSQL
+```
+
+If PostgreSQL can only safely process:
+
+```text
+2,000 reservation operations/sec
+```
+
+but the application receives:
+
+```text
+5,000/sec
+```
+
+we cannot simply keep pushing all 5,000 into PostgreSQL.
+
+We need to apply pressure upstream:
+
+```text
+5,000 incoming
+      ↓
+Admission control
+      ↓
+2,000 processed
+      ↓
+Remaining:
+queue / reject / retry later
+```
+
+This protects the downstream system.
+
+---
+
+# 7. Why this matters beyond databases
+
+Backpressure applies everywhere.
+
+### Kafka
+
+Consumer can't keep up:
+
+```text
+Producer → Kafka → Consumer
+                  ↓
+              lag increases
+```
+
+We need to manage consumer capacity.
+
+### External payment provider
+
+Provider allows only:
+
+```text
+1,000 requests/sec
+```
+
+but we generate:
+
+```text
+5,000/sec
+```
+
+We need controlled concurrency/retries/backoff.
+
+### Redis
+
+A hot key receives enormous traffic.
+
+We may need:
+
+* caching strategy
+* request coalescing
+* replication
+* key distribution
+
+### Database
+
+Too many writes:
+
+* connection pool limits
+* queueing
+* admission control
+* batching where appropriate
+* partitioning
+
+So **backpressure is a general distributed-systems concept**, not a parking-specific technique.
+
+---
+
+# 8. The dangerous combination: retries + overload
+
+This is worth remembering.
+
+Imagine PostgreSQL becomes overloaded.
+
+Requests start timing out:
+
+```text
+Request
+  ↓
+DB timeout
+```
+
+Client says:
+
+> "I'll retry."
+
+Now:
+
+```text
+1 request
+   ↓
+timeout
+   ↓
+retry
+```
+
+One user may generate two or three requests.
+
+At system level:
+
+```text
+10K requests
+   ↓
+timeouts
+   ↓
+30K retries
+   ↓
+more load
+   ↓
+more timeouts
+```
+
+This can create a **retry storm**.
+
+So a production system needs controlled retries:
+
+```text
+bounded retries
++
+exponential backoff
++
+jitter
++
+timeouts
+```
+
+And for operations such as payment/reservation, **idempotency** is essential.
+
+We've already covered that in our payment section.
+
+---
+
+# 9. A very important distinction
+
+Let's connect everything we've learned.
+
+### Rate limiting
+
+Controls:
+
+> **How frequently a client can send requests.**
+
+Example:
+
+```text
+100 requests/min/user
+```
+
+### Concurrency limiting
+
+Controls:
+
+> **How many operations can execute simultaneously.**
+
+Example:
+
+```text
+Maximum 100 concurrent reservations for Lot A
+```
+
+### Queue
+
+Controls:
+
+> **When work will be processed.**
+
+### Backpressure
+
+Controls:
+
+> **How much work is allowed to propagate into an overloaded downstream component.**
+
+### Load shedding
+
+Controls:
+
+> **What work we deliberately reject when capacity is insufficient.**
+
+These concepts often appear together, but they're not interchangeable.
+
+---
+
+# 10. Now let's return to distributed concurrency
+
+Suppose we decide:
+
+```text
+Lot A → max 100 concurrent reservations
+```
+
+But we have:
+
+```text
+Node 1
+Node 2
+Node 3
+...
+Node 50
+```
+
+If each Node.js process independently says:
+
+```text
+"Allow 100"
+```
+
+we could actually get:
+
+```text
+50 × 100 = 5,000
+```
+
+concurrent operations.
+
+So the limit isn't global.
+
+We need some form of **shared coordination**.
+
+Possible designs:
+
+```text
+                    Lot A requests
+                         │
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+            Node 1     Node 2     Node 3
+              │          │          │
+              └──────────┼──────────┘
+                         ↓
+                 Shared coordinator
+                         ↓
+                    PostgreSQL
+```
+
+The coordinator could conceptually be:
+
+* distributed lock
+* centralized queue
+* partition ownership
+* another coordination mechanism
+
+But each introduces complexity and potentially another bottleneck.
+
+---
+
+# 11. The key senior-level trade-off
+
+This is where I want you to develop judgment.
+
+Suppose PostgreSQL is already handling the workload comfortably.
+
+Adding:
+
+```text
+Redis distributed lock
++
+queue
++
+reservation workers
+```
+
+could actually make the system **more complicated without solving a real problem**.
+
+So:
+
+> **Don't introduce distributed coordination merely because a problem is theoretically possible. Introduce it when measurements and expected scale justify it.**
+
+That's a very strong system-design principle.
+
+---
+
+# 12. Where we are in our roadmap
+
+We can now say we've covered the important part of **hotspot handling and capacity control**:
+
+```text
+Traffic
+  ↓
+Capacity
+  ↓
+Identify bottleneck
+  ↓
+Optimize critical section
+  ↓
+Resource-level concurrency control
+  ↓
+Backpressure
+  ↓
+Queue / reject / load shed
+  ↓
+Avoid retry storms
+  ↓
+Distributed coordination when necessary
+```
+
+### What you should be able to reuse in ANY system
+
+When you see:
+
+> "One resource is extremely popular."
+
+Think:
+
+**Hotspot → contention → capacity → measure → reduce critical section → control concurrency → backpressure → scale/partition if necessary.**
+
+---
+
+## Next: Application/API Scaling
+
+Now we'll move one level outward:
+
+```text
+             Load Balancer
+                   ↓
+       ┌───────────┼───────────┐
+       ↓           ↓           ↓
+    Node.js      Node.js      Node.js
+       │           │           │
+       └───────────┼───────────┘
+                   ↓
+                Redis/DB
+```
+
+We'll go deep into **stateless services, horizontal scaling, load balancing, autoscaling, connection pools, graceful shutdown, health checks, and what happens when you scale Node.js from 1 → 10 → 100 instances.**
+
+That will be **Application/API Scaling**.
