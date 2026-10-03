@@ -811,6 +811,7 @@ only **one consumer can actively consume that partition at a time**. The other t
 > **Kafka provides automatic partition reassignment within a consumer group when a consumer fails. Multiple consumers provide failover and parallelism across partitions, but a single partition is processed by only one consumer in a consumer group at a time.**
 
 
+
 ### Entire region fails
 
 ```text
