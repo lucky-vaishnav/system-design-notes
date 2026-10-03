@@ -379,6 +379,179 @@ only 100 DB operations concurrently
 
 The rest wait or are rejected.
 
+#### rate limiting and concurrency limiting solve different problems
+Yes. And this is an important distinction because **rate limiting and concurrency limiting solve different problems**.
+
+#### 1. Rate limit
+
+Controls **how many requests can start over a period of time**.
+
+Example:
+
+```text
+Reserve API
+→ 100 requests/sec per user
+→ 1,000 requests/sec globally
+```
+
+Common algorithms:
+
+* Token Bucket
+* Leaky Bucket
+* Fixed Window
+* Sliding Window
+
+For a distributed Node.js system, a shared store such as Redis is commonly used so all API instances enforce the same limit.
+
+---
+
+#### 2. Concurrency limit
+
+Controls **how many requests can be executing at the same time**.
+
+For example:
+
+```text
+Reserve API
+        ↓
+Maximum 500 concurrent reservation operations
+        ↓
+If 500 are already running
+        ↓
+Reject / wait / queue
+```
+
+This is different from:
+
+> "Allow 1,000 requests per second."
+
+You could receive 1,000 requests/sec, but if each request takes 2 seconds, you could have roughly 2,000 requests in flight.
+
+---
+
+#### How would we implement it?
+
+For our parking system, I would think in **layers**:
+
+```text
+                 Incoming Request
+                        │
+                        ▼
+              ┌─────────────────┐
+              │   Rate Limiter  │
+              │  e.g. Redis     │
+              └────────┬────────┘
+                       │
+                  allowed?
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Concurrency     │
+              │ Limiter         │
+              └────────┬────────┘
+                       │
+                  capacity?
+                       │
+                       ▼
+                Reservation API
+                       │
+                       ▼
+                 PostgreSQL
+```
+
+#### Rate limit
+
+For example:
+
+> **100 reservation requests/sec per user and 10,000/sec globally.**
+
+This protects the API from excessive request volume.
+
+#### Concurrency limit
+
+Then:
+
+> **At most 500 reservation operations executing concurrently across the system.**
+
+This protects the expensive downstream operation, particularly PostgreSQL.
+
+---
+
+#### But there's an important distributed-systems issue
+
+If you simply do this inside each Node.js process:
+
+```js
+let activeRequests = 0;
+```
+
+it's **not a global limit**.
+
+If you have:
+
+```text
+10 Node instances
+×
+100 concurrent requests each
+=
+1,000 concurrent requests
+```
+
+Your supposed "100 concurrent request limit" is actually 1,000.
+
+So for a **global concurrency limit**, you need distributed coordination, such as:
+
+* Redis-based semaphore/counter
+* A centralized admission-control service
+* A queue/worker model
+* Or sometimes the database itself acts as the final concurrency control
+
+---
+
+#### For our parking system, I wouldn't automatically add a global concurrency limiter
+
+This is the senior-level nuance.
+
+We already have:
+
+```text
+Rate limiting
+      ↓
+API protection
+
+DB transactions + locks
+      ↓
+Correctness
+
+DB connection pool
+      ↓
+Limits DB concurrency
+
+Timeouts / backpressure
+      ↓
+Prevents uncontrolled waiting
+```
+
+If PostgreSQL can comfortably handle the reservation workload, adding a distributed semaphore just adds another distributed dependency and another potential bottleneck.
+
+I'd introduce a **global concurrency limit when measurements show that reservation requests are overwhelming the downstream capacity**.
+
+And for a very hot parking lot, we might need **resource-specific concurrency/admission control**, rather than one global limit.
+
+#### Interview answer
+
+If asked:
+
+> **"How would you control concurrency?"**
+
+A strong concise answer would be:
+
+> "I'd distinguish rate limiting from concurrency limiting. Rate limiting controls how many requests can enter over time, typically using a distributed token-bucket implementation such as Redis. Concurrency limiting controls how many expensive operations are in flight at once. For a distributed system, a global concurrency limit requires shared coordination such as a Redis semaphore or centralized admission control. However, I wouldn't add it by default; I'd first use database connection limits, transactions, and backpressure, and introduce explicit concurrency control when downstream saturation or a hot resource requires it."
+
+That's the important takeaway.
+
+
+
 ### Request coalescing
 
 Suppose 500 requests all miss the same key.
