@@ -7,7 +7,7 @@ The mental model is:
 > **Technology-agnostic responsibility → AWS service → alternatives → trade-offs**
 
 ---
-f
+
 ## 9.1 Overall AWS Architecture
 
 Our previous architecture becomes roughly:
