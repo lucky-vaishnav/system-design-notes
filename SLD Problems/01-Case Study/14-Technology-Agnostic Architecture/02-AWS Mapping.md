@@ -364,11 +364,9 @@ Instead:
 
 > **Choose based on messaging requirements, ordering, replay, consumer model, throughput, and operational needs.**
 
-**
-The key differences between SQS and Kafka stem from their contrasting messaging models, scalability, and performance. While SQS utilizes a pull-based model with messages typically consumed by a single consumer, Kafka follows a publish-subscribe model, enabling multiple consumers to read from the same stream of messages.  
+**The key differences between SQS and Kafka stem from their contrasting messaging models, scalability, and performance. While SQS utilizes a pull-based model with messages typically consumed by a single consumer(if there are more than one consumer then one message will be consumed by only one, it does not broadcast message like kafka do), Kafka follows a publish-subscribe model, enabling multiple consumers to read from the same stream of messages.**  
 
-Moreover, Kafka outshines SQS in terms of scalability and performance. It exhibits high throughput capabilities, making it suitable for handling large volumes of data and messages and allows for seamless scalability by adding more nodes to a Kafka cluster.
-**
+**Moreover, Kafka outshines SQS in terms of scalability and performance. It exhibits high throughput capabilities, making it suitable for handling large volumes of data and messages and allows for seamless scalability by adding more nodes to a Kafka cluster.**
 
 ---
 
